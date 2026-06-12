@@ -106,16 +106,7 @@ function maybeInjectPrerenderBootstrap(request, response) {
   return new HTMLRewriter().on("head", {
     element(head) {
       head.prepend(
-        `<meta id="wn-prerender-worker-boot-meta" name="wn-prerender-worker-boot" content="1">
-<script id="wn-prerender-worker-boot">
-window.prerenderReady = false;
-window.__wnPrerenderWorkerBoot = {
-  source: "cloudflare-worker",
-  path: ${JSON.stringify(url.pathname)},
-  startedAt: Date.now()
-};
-document.documentElement.setAttribute("data-wn-prerender-stage", "worker-boot");
-</script>`,
+        `<script>window.prerenderReady = false;</script>`,
         { html: true }
       );
     },
