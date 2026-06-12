@@ -37,6 +37,9 @@ const IGNORE_EXTENSIONS = [
 ];
 
 export default {
+  /**
+   * Hooks into the request, and changes origin if needed
+   */
   async fetch(request, env) {
     return await handleRequest(request, env).catch(
       (err) => new Response(err.stack, { status: 500 })
@@ -44,6 +47,11 @@ export default {
   },
 };
 
+/**
+ * @param {Request} request
+ * @param {any} env
+ * @returns {Promise<Response>}
+ */
 async function handleRequest(request, env) {
   const url = new URL(request.url);
   const userAgent = request.headers.get("User-Agent")?.toLowerCase() || "";
@@ -52,14 +60,19 @@ async function handleRequest(request, env) {
   const lastDot = pathName.lastIndexOf(".");
   const extension = lastDot > -1 ? pathName.substring(lastDot).toLowerCase() : "";
 
+  // Prerender loop protection
+  // Non robot user agent
+  // Ignore extensions
   if (
     isPrerender ||
     !BOT_AGENTS.some((bot) => userAgent.includes(bot.toLowerCase())) ||
     (extension.length && IGNORE_EXTENSIONS.includes(extension))
   ) {
-    return fetch(request);
+    const response = await fetch(request);
+    return isPrerender ? maybeInjectPrerenderBootstrap(request, response) : response;
   }
 
+  // Build Prerender request
   const newURL = `https://service.prerender.io/${request.url}`;
   const newHeaders = new Headers(request.headers);
 
@@ -70,4 +83,41 @@ async function handleRequest(request, env) {
     headers: newHeaders,
     redirect: "manual",
   }));
+}
+
+/**
+ * Prerender.io fetches the original page with X-Prerender set.
+ * Inject the flag directly into the HTML head so Prerender sees it before Softr bootstraps.
+ *
+ * @param {Request} request
+ * @param {Response} response
+ * @returns {Response}
+ */
+function maybeInjectPrerenderBootstrap(request, response) {
+  const url = new URL(request.url);
+  const contentType = response.headers.get("content-type") || "";
+  const isHtml = contentType.includes("text/html");
+  const isJobPage = /^\/job(?:\/|$)/i.test(url.pathname);
+
+  if (!isHtml || !isJobPage) {
+    return response;
+  }
+
+  return new HTMLRewriter().on("head", {
+    element(head) {
+      head.prepend(
+        `<meta id="wn-prerender-worker-boot-meta" name="wn-prerender-worker-boot" content="1">
+<script id="wn-prerender-worker-boot">
+window.prerenderReady = false;
+window.__wnPrerenderWorkerBoot = {
+  source: "cloudflare-worker",
+  path: ${JSON.stringify(url.pathname)},
+  startedAt: Date.now()
+};
+document.documentElement.setAttribute("data-wn-prerender-stage", "worker-boot");
+</script>`,
+        { html: true }
+      );
+    },
+  }).transform(response);
 }
